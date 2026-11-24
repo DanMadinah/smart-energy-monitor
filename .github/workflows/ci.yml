@@ -1,0 +1,22 @@
+name: CI — Python Syntax & Pytest Suite
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Compile check
+        run: python -m py_compile app.py src/*.py tests/*.py
+      - name: Run Pytest suite
+        run: PYTHONPATH=. pytest -v
