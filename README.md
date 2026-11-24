@@ -2,37 +2,38 @@
 
 Live app: [smart-energy-monitor-evhjv9owzhp7ad8vsfbnqp.streamlit.app](https://smart-energy-monitor-evhjv9owzhp7ad8vsfbnqp.streamlit.app/)
 
-A software-only web app for tracking household electricity usage, estimating monthly bills, and spotting unusual power spikes. Built with Python, Streamlit, Pandas, and Chart.js.
+A **software-simulated IoT energy monitoring prototype** built with Python, Streamlit, Pandas, and Chart.js. It simulates household electricity usage (or validates uploaded CSV meter logs), estimates monthly bills, forecasts 7-day demand, estimates CO₂ emissions, and flags unusual power spikes — with no physical hardware required.
 
 ## What it does
 
-- **Usage simulator & CSV upload**: Generates hourly kWh readings for 5 common appliances (Air Conditioning, Refrigerator, Lighting, Water Heater, Home Office & IT) with day/night and weekend patterns. You can also upload your own CSV file (`timestamp`, `total_kwh`).
-- **Interactive charts**: Uses Chart.js for the power-over-time line chart (with red markers on spikes), appliance share doughnut chart, and busiest-hours bar chart.
-- **Bill & savings estimate**: Calculates period cost and projected 30-day bill using Malaysia TNB tiered rates (MYR), Peak/Off-Peak rates, or a custom flat rate. Includes a monthly budget bar and a slider to test lowering AC usage.
-- **Spike detection**: Compares each hour against a 24-hour rolling average using a Z-score to flag sudden jumps, highlights the main appliance behind each spike, and lets you download the full table as CSV.
+- **Simulated meter & validated CSV upload**: Generates hourly `kWh` usage across 5 appliances (Air Conditioning, Refrigerator, Lighting, Water Heater, Home Office & IT) with custom average kW and manual spike controls. CSV uploads are checked for invalid timestamps, duplicates, missing/negative values, and irregular gaps.
+- **Malaysia 2025–2027 bill estimator**: Configurable estimate covering Energy, Capacity, Network, AFA fuel adjustment, and Monthly Retail Charge (waived at <= 600 kWh), alongside Peak/Off-Peak and Custom Flat Rate options.
+- **Unbiased spike detection**: Uses a shifted 24-hour rolling baseline (`.shift(1)`) so abnormal spikes never hide themselves, with plain-English explanations pointing to the main appliance.
+- **Per-appliance trends, 7-day forecast & CO₂ estimate**: Inspect individual appliance costs and history, view a 7-day usage forecast, and estimate monthly CO₂ emissions (`0.585 kg CO₂/kWh` default Peninsular Malaysia factor).
+- **Simulated MQTT telemetry & reports**: Displays MQTT-style IoT topic/JSON payloads (`home/<profile>/meter/reading`, `home/<profile>/alerts/spike`) and exports both **CSV** and **PDF** summary reports.
 
 ## Tech stack
 
-- Python 3.11
-- Streamlit
-- Pandas & NumPy
-- Chart.js 4
-- Pytest + GitHub Actions
+- Python 3.11, Streamlit, Pandas, NumPy, Chart.js 4, fpdf2
+- Pytest + GitHub Actions CI
 
 ## Files
 
 ```text
 smart-energy-monitor/
-├── .github/workflows/ci.yml    # Runs syntax check and pytest on push
+├── .github/workflows/ci.yml    # Syntax check and Pytest CI
 ├── .streamlit/config.toml      # Dark theme settings
+├── docs/ARCHITECTURE.md        # Data flow and design notes
 ├── src/
-│   ├── simulator.py            # Hourly usage generator and CSV loader
-│   ├── tariffs.py              # TNB tiered, peak/off-peak, and flat rate math
-│   ├── analytics.py            # Rolling average spike detection and summaries
-│   └── charts.py               # Chart.js HTML builders
+│   ├── simulator.py            # Hourly usage simulator and validated CSV loader
+│   ├── tariffs.py              # Malaysia 2025–2027, TOU, and flat rate estimator
+│   ├── analytics.py            # Shifted Z-score detector, CO2, and 7-day forecast
+│   ├── mqtt_sim.py             # Simulated MQTT IoT topic/payload stream
+│   ├── report.py               # Downloadable PDF summary report builder
+│   └── charts.py               # Chart.js 4 HTML builders
 ├── tests/
-│   └── test_energy_engine.py   # Unit tests for simulator, tariffs, and spike detection
-├── app.py                      # Main Streamlit app
+│   └── test_energy_engine.py   # Pytest suite covering tariffs, CSV, spikes, MQTT & PDF
+├── app.py                      # Main Streamlit dashboard
 ├── requirements.txt
 └── LICENSE
 ```
@@ -47,7 +48,7 @@ smart-energy-monitor/
   ```
 - **Tests**:
   ```bash
-  pytest -v
+  PYTHONPATH=. pytest -v
   ```
 
 ## Author

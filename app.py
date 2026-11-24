@@ -5,19 +5,25 @@ from __future__ import annotations
 import streamlit as st
 import streamlit.components.v1 as components
 
-from src.simulator import simulate_consumption, load_uploaded_csv
-from src.tariffs import estimate_costs
+from src.simulator import simulate_consumption, load_uploaded_csv, APPLIANCES
+from src.tariffs import TariffRates2025, estimate_costs
 from src.analytics import (
+    DEFAULT_CO2_KG_PER_KWH,
     detect_anomalies,
     hourly_profile,
     appliance_breakdown,
+    appliance_summary_table,
     phantom_overnight_load,
+    estimate_carbon_emissions,
+    forecast_next_7_days,
 )
 from src.charts import (
     render_timeseries_chart,
     render_appliance_doughnut,
     render_hourly_bar_chart,
 )
+from src.mqtt_sim import build_mqtt_messages
+from src.report import build_pdf_report
 
 st.set_page_config(
     page_title="Smart Energy Consumption Monitor — Muhammad Abdullahi Bukar",
@@ -358,16 +364,35 @@ with st.sidebar:
         ac_savings = st.slider("Lower AC usage by (%)", min_value=0, max_value=40, value=0, step=5)
 
     st.divider()
-    st.markdown("### 💳 Rate & Budget")
+    st.markdown("### 💳 Rate & Budget (Estimate)")
     tariff_mode = st.selectbox(
         "Electricity rate",
-        ["TNB Tiered (MYR)", "Time-of-Use (Peak / Off-Peak)", "Custom Flat Rate"],
+        ["Malaysia 2025–2027 Estimate (MYR)", "Time-of-Use (Peak / Off-Peak)", "Custom Flat Rate"],
     )
+    rates_2025 = TariffRates2025()
     custom_rate = 0.45
-    if tariff_mode == "Custom Flat Rate":
+    if tariff_mode == "Malaysia 2025–2027 Estimate (MYR)":
+        with st.expander("Adjust 2025–2027 rate components"):
+            e_std = st.number_input("Energy <=1500 kWh (RM/kWh)", value=0.2703, step=0.005, format="%.4f")
+            cap_r = st.number_input("Capacity charge (RM/kWh)", value=0.0455, step=0.005, format="%.4f")
+            net_r = st.number_input("Network charge (RM/kWh)", value=0.1285, step=0.005, format="%.4f")
+            afa_r = st.number_input("AFA fuel adjustment (RM/kWh)", value=0.0000, step=0.005, format="%.4f")
+            ret_m = st.number_input("Monthly retail charge (>600 kWh, RM)", value=10.00, step=1.0)
+            rates_2025 = TariffRates2025(
+                energy_standard=e_std,
+                capacity_rate=cap_r,
+                network_rate=net_r,
+                afa_rate=afa_r,
+                retail_monthly=ret_m,
+            )
+    elif tariff_mode == "Custom Flat Rate":
         custom_rate = st.number_input("Rate (RM / kWh)", min_value=0.05, max_value=2.00, value=0.45, step=0.01)
+
     monthly_budget = st.number_input(
         "Monthly budget (RM)", min_value=50.0, max_value=2000.0, value=preset["budget"], step=10.0
+    )
+    co2_factor = st.number_input(
+        "Grid CO2 factor (kg / kWh)", min_value=0.1, max_value=1.5, value=DEFAULT_CO2_KG_PER_KWH, step=0.01, format="%.3f"
     )
 
     st.divider()
@@ -383,22 +408,24 @@ with st.sidebar:
     aggregate_daily = st.toggle("Group chart by day", value=False)
 
 # ---------- Load / Simulate Data ----------
+csv_report = None
 if data_source == "Upload CSV" and uploaded is not None:
     try:
-        raw_df = load_uploaded_csv(uploaded)
+        raw_df, csv_report = load_uploaded_csv(uploaded)
+        data_mode_label = "Uploaded CSV Data"
     except Exception as exc:
         st.error(f"Could not read CSV: {exc}")
         st.stop()
 else:
+    data_mode_label = "Simulated Data (No Physical Meter)"
     if data_source == "Upload CSV":
-        st.info("Upload a CSV with `timestamp` and `total_kwh` columns — showing simulated data in the meantime.")
+        st.info("Upload a CSV with `timestamp` and `total_kwh` columns — showing simulated data until a file is uploaded.")
     raw_df = simulate_consumption(
         days=days,
         seed=int(seed),
         inject_anomalies=inject_spikes,
         ac_reduction_pct=float(ac_savings),
     )
-    # Apply building profile or user's custom average kW
     app_cols = ["Air Conditioning", "Refrigerator", "Lighting", "Water Heater", "Home Office & IT", "total_kwh"]
     if use_custom_kw and custom_avg_kw is not None:
         current_avg = float(raw_df["total_kwh"].mean())
@@ -409,31 +436,35 @@ else:
         for col in app_cols:
             raw_df[col] = (raw_df[col] * scale).round(3)
 
-    # Apply optional user-entered manual spike on the latest hour
     if manual_spike_kw > 0 and len(raw_df) > 0:
         last_idx = raw_df.index[-1]
         raw_df.loc[last_idx, "Air Conditioning"] = round(float(raw_df.loc[last_idx, "Air Conditioning"]) + manual_spike_kw, 3)
         raw_df.loc[last_idx, "total_kwh"] = round(float(raw_df.loc[last_idx, "total_kwh"]) + manual_spike_kw, 3)
 
 analyzed_df = detect_anomalies(raw_df, window=24, z_threshold=z_threshold)
-costs = estimate_costs(analyzed_df, tariff_mode=tariff_mode, custom_rate=custom_rate)
+costs = estimate_costs(analyzed_df, tariff_mode=tariff_mode, rates_2025=rates_2025, custom_rate=custom_rate)
+carbon = estimate_carbon_emissions(costs.total_kwh, costs.projected_30d_kwh, factor_kg_per_kwh=co2_factor)
 anomalies_df = analyzed_df[analyzed_df["is_anomaly"]].copy()
 night_load = phantom_overnight_load(analyzed_df)
 breakdown = appliance_breakdown(analyzed_df)
+appliance_table = appliance_summary_table(analyzed_df, avg_rate_rm=costs.avg_rate_per_kwh)
 profile = hourly_profile(analyzed_df)
-latest_kw = float(analyzed_df["total_kwh"].iloc[-1])
+forecast_df = forecast_next_7_days(analyzed_df)
+last_hour_kwh = float(analyzed_df["total_kwh"].iloc[-1])
 
-# ---------- Animated Hero Header + Live Power Flow SVG (no blank lines / indentation for Markdown) ----------
+# ---------- Animated Hero Header + Honest Source Badge & Accurate Units ----------
+badge_color = "#38bdf8" if csv_report is None else "#a78bfa"
 hero_html = (
     '<div class="hero-box"><div class="hero-grid">'
     '<div>'
-    f'<div class="hero-badge"><span class="hero-dot"></span> Live · {profile_name} · {latest_kw:.2f} kW now</div>'
+    f'<div class="hero-badge" style="color:{badge_color};border-color:{badge_color}55;background:{badge_color}1a">'
+    f'<span class="hero-dot" style="background:{badge_color}"></span> {data_mode_label} · {profile_name}</div>'
     '<h1 class="hero-title">Smart Energy Monitor</h1>'
-    '<p class="hero-sub">By <b>Muhammad Abdullahi Bukar</b> — Track electricity usage over time, '
-    'estimate your monthly bill, and spot unusual power spikes.</p>'
+    '<p class="hero-sub">By <b>Muhammad Abdullahi Bukar</b> — Track hourly energy (kWh), average power (kW), '
+    'estimated Malaysia 2025–2027 bills, CO₂ impact, and unusual power spikes.</p>'
     '</div>'
     '<div>'
-    '<svg viewBox="0 0 360 118" width="100%" role="img" aria-label="Live power flow">'
+    '<svg viewBox="0 0 360 118" width="100%" role="img" aria-label="Simulated power flow">'
     '<line x1="42" y1="42" x2="42" y2="96" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>'
     '<g class="e-spin" stroke="#38bdf8" stroke-width="3" stroke-linecap="round">'
     '<line x1="42" y1="42" x2="42" y2="16"/>'
@@ -441,14 +472,15 @@ hero_html = (
     '<line x1="42" y1="42" x2="20" y2="55"/>'
     '</g>'
     '<circle cx="42" cy="42" r="4" fill="#e0f2fe"/>'
-    '<text x="42" y="110" text-anchor="middle" fill="#94a3b8" font-size="10">Power Source</text>'
+    '<text x="42" y="110" text-anchor="middle" fill="#94a3b8" font-size="10">Grid / Sim</text>'
     '<path d="M58 68 H148" stroke="rgba(56,189,248,0.22)" stroke-width="5" stroke-linecap="round"/>'
     '<path class="flow-line" d="M58 68 H148" stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>'
-    '<rect x="148" y="42" width="64" height="52" rx="12" fill="rgba(15,23,42,0.9)" stroke="#34d399" stroke-width="2"/>'
-    f'<text x="180" y="64" text-anchor="middle" fill="#6ee7b7" font-size="11" font-weight="700">{latest_kw:.2f} kW</text>'
-    '<text x="180" y="80" text-anchor="middle" fill="#94a3b8" font-size="9">METER</text>'
-    '<path d="M212 68 H292" stroke="rgba(16,185,129,0.22)" stroke-width="5" stroke-linecap="round"/>'
-    '<path class="flow-line-amber" d="M212 68 H292" stroke="#34d399" stroke-width="3" stroke-linecap="round"/>'
+    '<rect x="140" y="38" width="80" height="58" rx="12" fill="rgba(15,23,42,0.9)" stroke="#34d399" stroke-width="2"/>'
+    f'<text x="180" y="61" text-anchor="middle" fill="#6ee7b7" font-size="11" font-weight="700">{last_hour_kwh:.2f} kWh</text>'
+    '<text x="180" y="75" text-anchor="middle" fill="#94a3b8" font-size="8.5">LAST HOUR</text>'
+    f'<text x="180" y="88" text-anchor="middle" fill="#38bdf8" font-size="8.5">Avg {costs.avg_power_kw:.2f} kW</text>'
+    '<path d="M220 68 H292" stroke="rgba(16,185,129,0.22)" stroke-width="5" stroke-linecap="round"/>'
+    '<path class="flow-line-amber" d="M220 68 H292" stroke="#34d399" stroke-width="3" stroke-linecap="round"/>'
     '<path d="M292 56 L320 34 L348 56 V94 H292 Z" fill="rgba(30,41,59,0.95)" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round"/>'
     '<rect x="303" y="63" width="10" height="10" rx="2" fill="#fbbf24"/>'
     '<rect x="327" y="63" width="10" height="10" rx="2" fill="#34d399"/>'
@@ -460,58 +492,101 @@ hero_html = (
 )
 st.markdown(hero_html, unsafe_allow_html=True)
 
+if csv_report and csv_report.warnings:
+    with st.expander(f"CSV Validation Notices ({len(csv_report.warnings)})", expanded=True):
+        for w in csv_report.warnings:
+            st.warning(w)
+
 # ---------- Glass KPI Cards ----------
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Total Power Used", f"{costs.total_kwh:,.2f} kWh", f"Avg {costs.avg_rate_per_kwh:.3f} {costs.currency}/kWh")
-c2.metric("Cost This Period", f"{costs.currency} {costs.period_cost:,.2f}", tariff_mode.split(" ")[0])
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Total Energy Used", f"{costs.total_kwh:,.2f} kWh", f"Last hour: {last_hour_kwh:.2f} kWh")
+c2.metric("Average Power", f"{costs.avg_power_kw:.2f} kW", f"Over {costs.span_hours:.0f} hrs")
 budget_delta = costs.projected_30d_cost - monthly_budget
 c3.metric(
-    "Estimated Monthly Bill",
+    "Est. Monthly Bill",
     f"{costs.currency} {costs.projected_30d_cost:,.2f}",
     f"{budget_delta:+.2f} {costs.currency} vs budget",
     delta_color="inverse",
 )
-c4.metric(
-    "Unusual Spikes",
-    f"{len(anomalies_df)}",
-    f"Night usage: {night_load:.2f} kWh/h",
-    delta_color="off",
-)
+c4.metric("Est. Monthly CO₂", f"{carbon.projected_30d_co2_kg:,.1f} kg", f"~{carbon.trees_needed_monthly:.0f} trees/mo", delta_color="off")
+c5.metric("Unusual Spikes", f"{len(anomalies_df)}", f"Night avg: {night_load:.2f} kWh/h", delta_color="off")
 
 budget_ratio = min(1.0, costs.projected_30d_cost / max(1.0, monthly_budget))
 if costs.projected_30d_cost > monthly_budget:
     st.warning(
-        f"Your estimated monthly bill (**{costs.currency} {costs.projected_30d_cost:,.2f}**) is over your "
+        f"Your estimated 30-day bill (**{costs.currency} {costs.projected_30d_cost:,.2f}**) is over your "
         f"**{costs.currency} {monthly_budget:,.2f}** budget. Try lowering AC usage in the left sidebar."
     )
 st.progress(budget_ratio, text=f"Monthly budget used: {int((costs.projected_30d_cost / max(1.0, monthly_budget)) * 100)}%")
 
 # ---------- Tabs ----------
-tab_overview, tab_anomalies, tab_data = st.tabs(
-    ["📈 Charts", f"🚨 Unusual Spikes ({len(anomalies_df)})", "📄 Table & Download"]
+tab_overview, tab_apps, tab_forecast, tab_alerts, tab_reports = st.tabs(
+    [
+        "📈 Charts",
+        "🔌 Appliances",
+        "🔮 Forecast & CO₂",
+        f"🚨 Spikes & MQTT ({len(anomalies_df)})",
+        "📄 Reports & Export",
+    ]
 )
 
 with tab_overview:
-    st.subheader("Power Usage Over Time")
+    st.subheader("Energy Usage Over Time (kWh)")
     components.html(render_timeseries_chart(analyzed_df, aggregate_daily=aggregate_daily), height=375)
 
     col_left, col_right = st.columns(2)
     with col_left:
-        st.subheader("Usage by Appliance (kWh)")
+        st.subheader("Share by Appliance (kWh)")
         components.html(render_appliance_doughnut(breakdown), height=330)
     with col_right:
         st.subheader("Busiest Hours of the Day")
         components.html(render_hourly_bar_chart(profile), height=330)
 
-with tab_anomalies:
+with tab_apps:
+    st.subheader("Per-Appliance Usage & Estimated Cost")
+    st.dataframe(appliance_table, use_container_width=True, hide_index=True)
+
+    selected_app = st.selectbox("Inspect individual appliance trend", APPLIANCES)
+    if selected_app in analyzed_df.columns:
+        app_series = analyzed_df[["timestamp", selected_app]].tail(168).set_index("timestamp")
+        st.line_chart(app_series, height=260)
+
+with tab_forecast:
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        st.subheader("Next 7-Day Energy Forecast (kWh/day)")
+        st.caption("Estimated from recent daily totals, trend, and weekend pattern.")
+        if not forecast_df.empty:
+            st.bar_chart(forecast_df.set_index("date")["predicted_kwh"], height=250)
+            st.dataframe(
+                forecast_df.rename(columns={"date": "Date", "predicted_kwh": "Predicted (kWh)"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+    with col_f2:
+        st.subheader("Estimated Monthly Bill Breakdown")
+        st.caption(f"Tariff: **{tariff_mode}** *(estimate only — adjust components in sidebar)*")
+        if costs.breakdown:
+            bd_rows = [{"Component": k, "Est. Amount (RM)": v} for k, v in costs.breakdown.items()]
+            st.dataframe(bd_rows, use_container_width=True, hide_index=True)
+
+        st.subheader("Carbon Footprint Estimate")
+        st.info(
+            f"**Period:** {carbon.period_co2_kg:,.2f} kg CO₂e  \n"
+            f"**Projected 30-day:** {carbon.projected_30d_co2_kg:,.2f} kg CO₂e "
+            f"(using `{carbon.factor_kg_per_kwh:.3f} kg CO₂/kWh` grid factor — equivalent to ~{carbon.trees_needed_monthly:.0f} trees absorbing CO₂ for a month)."
+        )
+
+with tab_alerts:
     st.subheader("Unusual Power Spikes Found")
     st.caption(
-        f"Hours where power jumped far above normal (sensitivity: **{z_threshold:.1f}**)."
+        f"Baseline uses **previous 24 hours only** (`.shift(1)`) so a spike never hides itself "
+        f"(sensitivity: **{z_threshold:.1f}**)."
     )
     if anomalies_df.empty:
         st.success("No unusual power spikes found at this sensitivity level.")
     else:
-        display_cols = ["timestamp", "total_kwh", "baseline_kwh", "z_score", "severity", "top_appliance"]
+        display_cols = ["timestamp", "total_kwh", "baseline_kwh", "z_score", "severity", "reason"]
         pretty = anomalies_df[display_cols].sort_values("timestamp", ascending=False).rename(
             columns={
                 "timestamp": "Time",
@@ -519,19 +594,47 @@ with tab_anomalies:
                 "baseline_kwh": "Normal (kWh)",
                 "z_score": "Spike Score",
                 "severity": "Level",
-                "top_appliance": "Main Appliance",
+                "reason": "Explanation",
             }
         )
         st.dataframe(pretty, use_container_width=True, hide_index=True)
 
-with tab_data:
+    st.divider()
+    st.subheader("Simulated MQTT Telemetry Stream")
+    st.caption("Shows how an IoT smart meter would publish these readings and alerts over MQTT topics (simulated in software).")
+    slug = profile_name.lower().split("(")[0].strip().replace(" ", "-").replace("/", "")
+    mqtt_msgs = build_mqtt_messages(analyzed_df, profile_slug=slug, limit=6)
+    st.dataframe(mqtt_msgs, use_container_width=True, hide_index=True)
+
+with tab_reports:
+    st.subheader("Export Reports")
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        csv_bytes = analyzed_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="⬇️ Download Data Report (CSV)",
+            data=csv_bytes,
+            file_name="smart-energy-report.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with col_dl2:
+        pdf_bytes = build_pdf_report(
+            profile_name=profile_name,
+            data_mode=data_mode_label,
+            tariff_mode=tariff_mode,
+            costs=costs,
+            carbon=carbon,
+            appliance_df=appliance_table,
+            anomalies_df=anomalies_df,
+        )
+        st.download_button(
+            label="📄 Download Summary Report (PDF)",
+            data=pdf_bytes,
+            file_name="smart-energy-summary.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+
     st.subheader("Hourly Power Readings")
     st.dataframe(analyzed_df.tail(200), use_container_width=True, hide_index=True)
-
-    csv_bytes = analyzed_df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="⬇️ Download Report (CSV)",
-        data=csv_bytes,
-        file_name="smart-energy-report.csv",
-        mime="text/csv",
-    )
