@@ -332,8 +332,27 @@ with st.sidebar:
     if data_source == "Upload CSV":
         uploaded = st.file_uploader("Upload CSV (`timestamp`, `total_kwh`)", type=["csv"])
         days, inject_spikes, seed, ac_savings = 14, 5, preset["seed"], 0
+        use_custom_kw, custom_avg_kw, manual_spike_kw = False, None, 0.0
     else:
         days = st.slider("Days to show", min_value=3, max_value=30, value=14)
+        use_custom_kw = st.toggle("Set my own power (kW)", value=False)
+        custom_avg_kw = None
+        if use_custom_kw:
+            custom_avg_kw = st.number_input(
+                "Average power (kW)",
+                min_value=0.2,
+                max_value=25.0,
+                value=round(1.5 * preset["scale"], 2),
+                step=0.1,
+            )
+        manual_spike_kw = st.number_input(
+            "Add manual spike on latest hour (+kW)",
+            min_value=0.0,
+            max_value=20.0,
+            value=0.0,
+            step=0.5,
+            help="Type a number above 0 (e.g. 3.5) to test a live spike right now.",
+        )
         inject_spikes = st.slider("Random power spikes", min_value=0, max_value=12, value=5)
         seed = st.number_input("Seed", min_value=1, max_value=9999, value=preset["seed"], step=1)
         ac_savings = st.slider("Lower AC usage by (%)", min_value=0, max_value=40, value=0, step=5)
@@ -379,11 +398,22 @@ else:
         inject_anomalies=inject_spikes,
         ac_reduction_pct=float(ac_savings),
     )
-    # Apply building profile load multiplier
-    scale = preset["scale"]
+    # Apply building profile or user's custom average kW
+    app_cols = ["Air Conditioning", "Refrigerator", "Lighting", "Water Heater", "Home Office & IT", "total_kwh"]
+    if use_custom_kw and custom_avg_kw is not None:
+        current_avg = float(raw_df["total_kwh"].mean())
+        scale = (custom_avg_kw / current_avg) if current_avg > 0 else 1.0
+    else:
+        scale = preset["scale"]
     if scale != 1.0:
-        for col in ["Air Conditioning", "Refrigerator", "Lighting", "Water Heater", "Home Office & IT", "total_kwh"]:
+        for col in app_cols:
             raw_df[col] = (raw_df[col] * scale).round(3)
+
+    # Apply optional user-entered manual spike on the latest hour
+    if manual_spike_kw > 0 and len(raw_df) > 0:
+        last_idx = raw_df.index[-1]
+        raw_df.loc[last_idx, "Air Conditioning"] = round(float(raw_df.loc[last_idx, "Air Conditioning"]) + manual_spike_kw, 3)
+        raw_df.loc[last_idx, "total_kwh"] = round(float(raw_df.loc[last_idx, "total_kwh"]) + manual_spike_kw, 3)
 
 analyzed_df = detect_anomalies(raw_df, window=24, z_threshold=z_threshold)
 costs = estimate_costs(analyzed_df, tariff_mode=tariff_mode, custom_rate=custom_rate)
