@@ -1,5 +1,7 @@
 # Smart Energy Consumption Monitoring (by Muhammad Abdullahi Bukar)
 
+> **Live App:** [Open Smart Energy Consumption Monitor →](https://smart-energy-monitor-evhjv9owzhp7ad8vsfbnqp.streamlit.app/)
+
 A software-only energy analytics, cost estimation, and statistical anomaly detection platform built with **Python, Streamlit, Pandas, and Chart.js**.
 
 Simulates realistic multi-appliance electricity consumption without physical hardware, computes estimated utility bills under tiered & time-of-use tariffs, and automatically flags abnormal power spikes using a rolling Z-score detector.
