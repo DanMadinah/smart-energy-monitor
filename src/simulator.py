@@ -1,4 +1,4 @@
-"""Realistic electricity consumption simulator & CSV loader (no physical hardware required)."""
+"""Hourly electricity usage simulator and CSV loader."""
 
 from __future__ import annotations
 
@@ -22,10 +22,8 @@ def simulate_consumption(
     ac_reduction_pct: float = 0.0,
 ) -> pd.DataFrame:
     """
-    Generate realistic hourly electricity consumption (kWh) per appliance.
-
-    Models diurnal cycles (afternoon cooling peaks, evening lighting/shower peaks,
-    overnight base load), weekend variations, and optional injected fault spikes.
+    Generate hourly electricity usage (kWh) per appliance with day/night
+    and weekend patterns, plus optional random power spikes.
     """
     rng = np.random.default_rng(seed)
     end = datetime.now().replace(minute=0, second=0, microsecond=0)
@@ -39,7 +37,7 @@ def simulate_consumption(
         h = ts.hour
         is_weekend = ts.weekday() >= 5
 
-        # Diurnal load profiles (kWh per hour)
+        # Day/night usage profiles (kWh per hour)
         ac_base = (1.35 if 12 <= h <= 17 else 0.95 if 18 <= h <= 23 else 0.35) * (1.12 if is_weekend else 1.0)
         ac_kwh = max(0.05, rng.normal(ac_base, 0.14)) * ac_scale
 

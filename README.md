@@ -1,64 +1,59 @@
-# Smart Energy Consumption Monitoring (by Muhammad Abdullahi Bukar)
+# Smart Energy Monitor
 
-> **Live App:** [Open Smart Energy Consumption Monitor →](https://smart-energy-monitor-evhjv9owzhp7ad8vsfbnqp.streamlit.app/)
+Live app: [smart-energy-monitor-evhjv9owzhp7ad8vsfbnqp.streamlit.app](https://smart-energy-monitor-evhjv9owzhp7ad8vsfbnqp.streamlit.app/)
 
-A software-only energy analytics, cost estimation, and statistical anomaly detection platform built with **Python, Streamlit, Pandas, and Chart.js**.
+A software-only web app for tracking household electricity usage, estimating monthly bills, and spotting unusual power spikes. Built with Python, Streamlit, Pandas, and Chart.js.
 
-Simulates realistic multi-appliance electricity consumption without physical hardware, computes estimated utility bills under tiered & time-of-use tariffs, and automatically flags abnormal power spikes using a rolling Z-score detector.
+## What it does
 
-## Key Features
+- **Usage simulator & CSV upload**: Generates hourly kWh readings for 5 common appliances (Air Conditioning, Refrigerator, Lighting, Water Heater, Home Office & IT) with day/night and weekend patterns. You can also upload your own CSV file (`timestamp`, `total_kwh`).
+- **Interactive charts**: Uses Chart.js for the power-over-time line chart (with red markers on spikes), appliance share doughnut chart, and busiest-hours bar chart.
+- **Bill & savings estimate**: Calculates period cost and projected 30-day bill using Malaysia TNB tiered rates (MYR), Peak/Off-Peak rates, or a custom flat rate. Includes a monthly budget bar and a slider to test lowering AC usage.
+- **Spike detection**: Compares each hour against a 24-hour rolling average using a Z-score to flag sudden jumps, highlights the main appliance behind each spike, and lets you download the full table as CSV.
 
-- **Multi-Appliance Electricity Simulator**: Models diurnal & weekend load curves across 5 appliance categories (`Air Conditioning`, `Refrigerator`, `Lighting`, `Water Heater`, `Home Office & IT`), supports live fault-spike injection, and accepts custom CSV meter uploads.
-- **Interactive Chart.js Visualizations**: Embedded Chart.js 4.x time-series consumption chart (with rolling baseline and red anomaly markers), appliance share doughnut chart, and 24-hour peak-demand bar chart.
-- **Electricity Cost & Savings Estimator**:
-  - **Malaysia TNB Tiered Tariff (MYR)**, **Time-of-Use (Peak / Off-Peak)**, and **Custom Flat Rate** calculators.
-  - 30-day projected bill, monthly budget utilization bar, and a **What-If AC reduction slider** to quantify potential savings.
-- **Automated Anomaly Detection**: Pandas 24-hour rolling Z-score engine that flags `WARNING` and `CRITICAL` spikes, identifies the top contributing appliance, measures overnight phantom load (`01:00–05:00`), and exports full CSV reports.
-- **Automated Testing & CI**: Pytest unit/integration test suite running automatically on every push & PR via GitHub Actions.
+## Tech stack
 
-## Architecture
+- Python 3.11
+- Streamlit
+- Pandas & NumPy
+- Chart.js 4
+- Pytest + GitHub Actions
 
-```mermaid
-flowchart LR
-    Sim["Electricity Simulator /<br/>CSV Upload (src/simulator.py)"] --> Pandas["Pandas Rolling Z-Score<br/>Anomaly Engine (src/analytics.py)"]
-    Pandas --> Tariff["TNB Tiered & TOU<br/>Cost Estimator (src/tariffs.py)"]
-    Pandas --> Charts["Interactive Chart.js 4.x<br/>Visualizations (src/charts.py)"]
-    Tariff --> UI["Streamlit Cloud Dashboard<br/>(app.py)"]
-    Charts --> UI
-```
-
-## Project Structure
+## Files
 
 ```text
 smart-energy-monitor/
-├── .github/workflows/
-│   └── ci.yml                  # Python 3.11 compile check + Pytest CI pipeline
-├── .streamlit/
-│   └── config.toml             # Dark theme & headless server configuration
+├── .github/workflows/ci.yml    # Runs syntax check and pytest on push
+├── .streamlit/config.toml      # Dark theme settings
 ├── src/
-│   ├── simulator.py            # Multi-appliance kWh simulator & CSV loader
-│   ├── tariffs.py              # Malaysia TNB Tiered, TOU & Custom cost calculator
-│   ├── analytics.py            # Rolling Z-score anomaly detector & load analytics
-│   └── charts.py               # Embedded Chart.js 4.x HTML/JS chart builders
+│   ├── simulator.py            # Hourly usage generator and CSV loader
+│   ├── tariffs.py              # TNB tiered, peak/off-peak, and flat rate math
+│   ├── analytics.py            # Rolling average spike detection and summaries
+│   └── charts.py               # Chart.js HTML builders
 ├── tests/
-│   └── test_energy_engine.py   # Pytest suite (simulator, tariffs, anomaly detection)
-├── app.py                      # Main Streamlit application
+│   └── test_energy_engine.py   # Unit tests for simulator, tariffs, and spike detection
+├── app.py                      # Main Streamlit app
 ├── requirements.txt
-├── LICENSE
-└── README.md
+└── LICENSE
 ```
 
-## Deploy Live Online (Free — Zero Local Setup)
+## Running or deploying
 
-1. Push this repository to GitHub.
-2. Open [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub.
-3. Click **Create app** → select this repository → set **Main file path** to `app.py` → click **Deploy**.
-4. Your live public app will be online in ~1 minute!
+- **Streamlit Cloud**: Connect this repo on [share.streamlit.io](https://share.streamlit.io) with `app.py` as the main file.
+- **Local**:
+  ```bash
+  pip install -r requirements.txt
+  streamlit run app.py
+  ```
+- **Tests**:
+  ```bash
+  pytest -v
+  ```
 
 ## Author
 
-- **Muhammad Abdullahi Bukar**
+Muhammad Abdullahi Bukar
 
 ## License
 
-Licensed under the MIT License — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
