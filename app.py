@@ -268,7 +268,6 @@ button[data-baseweb="tab"] {
   <div class="e-pulse p1"></div>
   <div class="e-pulse p2"></div>
   <div class="e-pulse p3"></div>
-
   <!-- Floating Lightning Bolt -->
   <svg class="e-icon i1" width="38" height="38" viewBox="0 0 24 24" fill="#34d399">
     <path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/>
@@ -324,38 +323,45 @@ PROFILES = {
 
 # ---------- Sidebar Controls ----------
 with st.sidebar:
-    st.markdown("### ⚡ Control Center")
-    profile_name = st.selectbox("Building profile", list(PROFILES.keys()))
+    st.markdown("### ⚡ Settings")
+    profile_name = st.selectbox("Home / Building", list(PROFILES.keys()))
     preset = PROFILES[profile_name]
 
-    data_source = st.radio("Data source", ["Live Simulator", "Upload CSV"], horizontal=True)
+    data_source = st.radio("Data", ["Simulator", "Upload CSV"], horizontal=True)
     uploaded = None
     if data_source == "Upload CSV":
-        uploaded = st.file_uploader("Upload meter CSV (`timestamp`, `total_kwh`)", type=["csv"])
+        uploaded = st.file_uploader("Upload CSV (`timestamp`, `total_kwh`)", type=["csv"])
         days, inject_spikes, seed, ac_savings = 14, 5, preset["seed"], 0
     else:
-        days = st.slider("Simulation window (days)", min_value=3, max_value=30, value=14)
-        inject_spikes = st.slider("Simulated fault spikes", min_value=0, max_value=12, value=5)
-        seed = st.number_input("Random seed", min_value=1, max_value=9999, value=preset["seed"], step=1)
-        ac_savings = st.slider("What-If: Reduce AC usage (%)", min_value=0, max_value=40, value=0, step=5)
+        days = st.slider("Days to show", min_value=3, max_value=30, value=14)
+        inject_spikes = st.slider("Random power spikes", min_value=0, max_value=12, value=5)
+        seed = st.number_input("Seed", min_value=1, max_value=9999, value=preset["seed"], step=1)
+        ac_savings = st.slider("Lower AC usage by (%)", min_value=0, max_value=40, value=0, step=5)
 
     st.divider()
-    st.markdown("### 💳 Tariff & Budget")
+    st.markdown("### 💳 Rate & Budget")
     tariff_mode = st.selectbox(
-        "Tariff model",
+        "Electricity rate",
         ["TNB Tiered (MYR)", "Time-of-Use (Peak / Off-Peak)", "Custom Flat Rate"],
     )
     custom_rate = 0.45
     if tariff_mode == "Custom Flat Rate":
         custom_rate = st.number_input("Rate (RM / kWh)", min_value=0.05, max_value=2.00, value=0.45, step=0.01)
     monthly_budget = st.number_input(
-        "Monthly budget target (RM)", min_value=50.0, max_value=2000.0, value=preset["budget"], step=10.0
+        "Monthly budget (RM)", min_value=50.0, max_value=2000.0, value=preset["budget"], step=10.0
     )
 
     st.divider()
-    st.markdown("### 🚨 Anomaly Engine")
-    z_threshold = st.slider("Rolling Z-score threshold", min_value=1.5, max_value=4.0, value=2.5, step=0.1)
-    aggregate_daily = st.toggle("Aggregate chart by day", value=False)
+    st.markdown("### 🚨 Spike Alerts")
+    z_threshold = st.slider(
+        "Alert sensitivity",
+        min_value=1.5,
+        max_value=4.0,
+        value=2.5,
+        step=0.1,
+        help="Lower number = catches smaller spikes; higher = only big spikes.",
+    )
+    aggregate_daily = st.toggle("Group chart by day", value=False)
 
 # ---------- Load / Simulate Data ----------
 if data_source == "Upload CSV" and uploaded is not None:
@@ -387,124 +393,114 @@ breakdown = appliance_breakdown(analyzed_df)
 profile = hourly_profile(analyzed_df)
 latest_kw = float(analyzed_df["total_kwh"].iloc[-1])
 
-# ---------- Animated Hero Header + Live Smart-Grid Flow SVG ----------
-st.markdown(
-    f"""
-<div class="hero-box">
-  <div class="hero-grid">
-    <div>
-      <div class="hero-badge"><span class="hero-dot"></span> Live Energy Telemetry · {profile_name} · {latest_kw:.2f} kW</div>
-      <h1 class="hero-title">Smart Energy Consumption Monitor</h1>
-      <p class="hero-sub">
-        Built by <b>Muhammad Abdullahi Bukar</b> · Real-time electricity simulation, TNB/TOU cost forecasting,
-        and Pandas rolling Z-score anomaly detection powered by Streamlit &amp; Chart.js.
-      </p>
-    </div>
-    <div>
-      <svg viewBox="0 0 360 118" width="100%" role="img" aria-label="Animated smart energy grid flow">
-        <!-- Spinning Wind Turbine -->
-        <line x1="42" y1="42" x2="42" y2="96" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
-        <g class="e-spin" stroke="#38bdf8" stroke-width="3" stroke-linecap="round">
-          <line x1="42" y1="42" x2="42" y2="16"/>
-          <line x1="42" y1="42" x2="64" y2="55"/>
-          <line x1="42" y1="42" x2="20" y2="55"/>
-        </g>
-        <circle cx="42" cy="42" r="4" fill="#e0f2fe"/>
-        <text x="42" y="110" text-anchor="middle" fill="#94a3b8" font-size="10">Grid / Wind</text>
-
-        <!-- Animated Energy Flow Cable 1 -->
-        <path d="M58 68 H148" stroke="rgba(56,189,248,0.22)" stroke-width="5" stroke-linecap="round"/>
-        <path class="flow-line" d="M58 68 H148" stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
-
-        <!-- Smart Meter Node -->
-        <rect x="148" y="42" width="64" height="52" rx="12" fill="rgba(15,23,42,0.9)" stroke="#34d399" stroke-width="2"/>
-        <text x="180" y="64" text-anchor="middle" fill="#6ee7b7" font-size="11" font-weight="700">{latest_kw:.2f} kW</text>
-        <text x="180" y="80" text-anchor="middle" fill="#94a3b8" font-size="9">SMART METER</text>
-
-        <!-- Animated Energy Flow Cable 2 -->
-        <path d="M212 68 H292" stroke="rgba(16,185,129,0.22)" stroke-width="5" stroke-linecap="round"/>
-        <path class="flow-line-amber" d="M212 68 H292" stroke="#34d399" stroke-width="3" stroke-linecap="round"/>
-
-        <!-- Smart Building / Home -->
-        <path d="M292 56 L320 34 L348 56 V94 H292 Z" fill="rgba(30,41,59,0.95)" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round"/>
-        <rect x="303" y="63" width="10" height="10" rx="2" fill="#fbbf24"/>
-        <rect x="327" y="63" width="10" height="10" rx="2" fill="#34d399"/>
-        <rect x="315" y="79" width="10" height="15" rx="1" fill="#38bdf8"/>
-        <text x="320" y="110" text-anchor="middle" fill="#94a3b8" font-size="10">Smart Load</text>
-      </svg>
-    </div>
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
+# ---------- Animated Hero Header + Live Power Flow SVG (no blank lines / indentation for Markdown) ----------
+hero_html = (
+    '<div class="hero-box"><div class="hero-grid">'
+    '<div>'
+    f'<div class="hero-badge"><span class="hero-dot"></span> Live · {profile_name} · {latest_kw:.2f} kW now</div>'
+    '<h1 class="hero-title">Smart Energy Monitor</h1>'
+    '<p class="hero-sub">By <b>Muhammad Abdullahi Bukar</b> — Track electricity usage over time, '
+    'estimate your monthly bill, and spot unusual power spikes.</p>'
+    '</div>'
+    '<div>'
+    '<svg viewBox="0 0 360 118" width="100%" role="img" aria-label="Live power flow">'
+    '<line x1="42" y1="42" x2="42" y2="96" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>'
+    '<g class="e-spin" stroke="#38bdf8" stroke-width="3" stroke-linecap="round">'
+    '<line x1="42" y1="42" x2="42" y2="16"/>'
+    '<line x1="42" y1="42" x2="64" y2="55"/>'
+    '<line x1="42" y1="42" x2="20" y2="55"/>'
+    '</g>'
+    '<circle cx="42" cy="42" r="4" fill="#e0f2fe"/>'
+    '<text x="42" y="110" text-anchor="middle" fill="#94a3b8" font-size="10">Power Source</text>'
+    '<path d="M58 68 H148" stroke="rgba(56,189,248,0.22)" stroke-width="5" stroke-linecap="round"/>'
+    '<path class="flow-line" d="M58 68 H148" stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>'
+    '<rect x="148" y="42" width="64" height="52" rx="12" fill="rgba(15,23,42,0.9)" stroke="#34d399" stroke-width="2"/>'
+    f'<text x="180" y="64" text-anchor="middle" fill="#6ee7b7" font-size="11" font-weight="700">{latest_kw:.2f} kW</text>'
+    '<text x="180" y="80" text-anchor="middle" fill="#94a3b8" font-size="9">METER</text>'
+    '<path d="M212 68 H292" stroke="rgba(16,185,129,0.22)" stroke-width="5" stroke-linecap="round"/>'
+    '<path class="flow-line-amber" d="M212 68 H292" stroke="#34d399" stroke-width="3" stroke-linecap="round"/>'
+    '<path d="M292 56 L320 34 L348 56 V94 H292 Z" fill="rgba(30,41,59,0.95)" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round"/>'
+    '<rect x="303" y="63" width="10" height="10" rx="2" fill="#fbbf24"/>'
+    '<rect x="327" y="63" width="10" height="10" rx="2" fill="#34d399"/>'
+    '<rect x="315" y="79" width="10" height="15" rx="1" fill="#38bdf8"/>'
+    '<text x="320" y="110" text-anchor="middle" fill="#94a3b8" font-size="10">Home</text>'
+    '</svg>'
+    '</div>'
+    '</div></div>'
 )
+st.markdown(hero_html, unsafe_allow_html=True)
 
 # ---------- Glass KPI Cards ----------
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Total Energy Used", f"{costs.total_kwh:,.2f} kWh", f"Avg {costs.avg_rate_per_kwh:.3f} {costs.currency}/kWh")
-c2.metric("Estimated Period Cost", f"{costs.currency} {costs.period_cost:,.2f}", tariff_mode.split(" ")[0])
+c1.metric("Total Power Used", f"{costs.total_kwh:,.2f} kWh", f"Avg {costs.avg_rate_per_kwh:.3f} {costs.currency}/kWh")
+c2.metric("Cost This Period", f"{costs.currency} {costs.period_cost:,.2f}", tariff_mode.split(" ")[0])
 budget_delta = costs.projected_30d_cost - monthly_budget
 c3.metric(
-    "Projected 30-Day Bill",
+    "Estimated Monthly Bill",
     f"{costs.currency} {costs.projected_30d_cost:,.2f}",
     f"{budget_delta:+.2f} {costs.currency} vs budget",
     delta_color="inverse",
 )
 c4.metric(
-    "Unusual Spikes Flagged",
+    "Unusual Spikes",
     f"{len(anomalies_df)}",
-    f"Overnight base: {night_load:.2f} kWh/h",
+    f"Night usage: {night_load:.2f} kWh/h",
     delta_color="off",
 )
 
 budget_ratio = min(1.0, costs.projected_30d_cost / max(1.0, monthly_budget))
 if costs.projected_30d_cost > monthly_budget:
     st.warning(
-        f"Projected 30-day bill (**{costs.currency} {costs.projected_30d_cost:,.2f}**) exceeds your "
-        f"**{costs.currency} {monthly_budget:,.2f}** monthly budget. Try adjusting the *What-If AC Reduction* slider in the sidebar."
+        f"Your estimated monthly bill (**{costs.currency} {costs.projected_30d_cost:,.2f}**) is over your "
+        f"**{costs.currency} {monthly_budget:,.2f}** budget. Try lowering AC usage in the left sidebar."
     )
-st.progress(budget_ratio, text=f"Monthly Budget Utilization: {int((costs.projected_30d_cost / max(1.0, monthly_budget)) * 100)}%")
+st.progress(budget_ratio, text=f"Monthly budget used: {int((costs.projected_30d_cost / max(1.0, monthly_budget)) * 100)}%")
 
 # ---------- Tabs ----------
 tab_overview, tab_anomalies, tab_data = st.tabs(
-    ["📈 Monitoring & Charts (Chart.js)", f"🚨 Anomaly Alerts ({len(anomalies_df)})", "📄 Data & Export"]
+    ["📈 Charts", f"🚨 Unusual Spikes ({len(anomalies_df)})", "📄 Table & Download"]
 )
 
 with tab_overview:
-    st.subheader("Energy Consumption Over Time (with Rolling Baseline & Anomalies)")
+    st.subheader("Power Usage Over Time")
     components.html(render_timeseries_chart(analyzed_df, aggregate_daily=aggregate_daily), height=375)
 
     col_left, col_right = st.columns(2)
     with col_left:
-        st.subheader("Consumption by Appliance (kWh)")
+        st.subheader("Usage by Appliance (kWh)")
         components.html(render_appliance_doughnut(breakdown), height=330)
     with col_right:
-        st.subheader("24-Hour Peak Demand Profile")
+        st.subheader("Busiest Hours of the Day")
         components.html(render_hourly_bar_chart(profile), height=330)
 
 with tab_anomalies:
-    st.subheader("Detected Unusual Consumption Patterns")
+    st.subheader("Unusual Power Spikes Found")
     st.caption(
-        f"Flagged automatically using a 24-hour rolling Z-score ≥ **{z_threshold:.1f}** "
-        "(identifies power surges, stuck compressors, or abnormal heater loads)."
+        f"Hours where power jumped far above normal (sensitivity: **{z_threshold:.1f}**)."
     )
     if anomalies_df.empty:
-        st.success("No unusual consumption spikes detected at the current sensitivity threshold.")
+        st.success("No unusual power spikes found at this sensitivity level.")
     else:
         display_cols = ["timestamp", "total_kwh", "baseline_kwh", "z_score", "severity", "top_appliance"]
-        st.dataframe(
-            anomalies_df[display_cols].sort_values("timestamp", ascending=False),
-            use_container_width=True,
-            hide_index=True,
+        pretty = anomalies_df[display_cols].sort_values("timestamp", ascending=False).rename(
+            columns={
+                "timestamp": "Time",
+                "total_kwh": "Actual (kWh)",
+                "baseline_kwh": "Normal (kWh)",
+                "z_score": "Spike Score",
+                "severity": "Level",
+                "top_appliance": "Main Appliance",
+            }
         )
+        st.dataframe(pretty, use_container_width=True, hide_index=True)
 
 with tab_data:
-    st.subheader("Raw & Analyzed Meter Readings")
+    st.subheader("Hourly Power Readings")
     st.dataframe(analyzed_df.tail(200), use_container_width=True, hide_index=True)
 
     csv_bytes = analyzed_df.to_csv(index=False).encode("utf-8")
     st.download_button(
-        label="⬇️ Download Full Analyzed Report (CSV)",
+        label="⬇️ Download Report (CSV)",
         data=csv_bytes,
         file_name="smart-energy-report.csv",
         mime="text/csv",
